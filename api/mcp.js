@@ -1,14 +1,6 @@
 const http = require('http');
-const server = http.createServer((req, res) => {
-  res.end('MCP server running');
-});
-server.listen(process.env.PORT || 3000, () => {
-  console.log('Server started');
-});
-
-// ==========下面粘贴你原来全部的mcp.js原有代码==========
-
 const nodemailer = require("nodemailer");
+const imap = require("imap");
 
 const getTransporter = () => {
   return nodemailer.createTransport({
@@ -22,10 +14,10 @@ const getTransporter = () => {
   });
 };
 
-module.exports = async (req, res) => {
+async function handleMCP(req, res) {
   res.setHeader("Content-Type", "text/event-stream");
   res.setHeader("Cache-Control", "no-cache");
-  res.setHeader("Connection", "keep‑alive");
+  res.setHeader("Connection", "keep-alive");
 
   const sendEvent = (data) => {
     res.write(`data: ${JSON.stringify(data)}\n\n`);
@@ -91,7 +83,6 @@ module.exports = async (req, res) => {
         });
         sendEvent({ jsonrpc: "2.0", id, result: { content: [{ type: "text", text: "发送成功" }] } });
       } else if (toolName === "check_mail") {
-        const imap = require("imap");
         const imapConn = new imap({
           host: "imap.qq.com",
           port: 993,
@@ -104,7 +95,11 @@ module.exports = async (req, res) => {
           imapConn.openBox("INBOX", false, (err, box) => {
             if (err) { imapConn.end(); return; }
             imapConn.search(["UNSEEN"], (err, uids) => {
-              if (err || uids.length === 0) { imapConn.end(); return; }
+              if (err || uids.length === 0) {
+                sendEvent({ jsonrpc: "2.0", id, result: { content: [{ type: "text", text: latestMailText }] } });
+                imapConn.end();
+                return;
+              }
               const latestUid = uids[uids.length - 1];
               const fetch = imapConn.fetch(latestUid, { bodies: "" });
               fetch.on("message", (msg) => {
@@ -113,12 +108,12 @@ module.exports = async (req, res) => {
                   stream.on("data", d => buff += d.toString("utf8"));
                   stream.on("end", () => {
                     latestMailText = buff;
-                    imapConn.end();
                   });
                 });
               });
               fetch.on("end", () => {
                 sendEvent({ jsonrpc: "2.0", id, result: { content: [{ type: "text", text: latestMailText }] } });
+                imapConn.end();
               });
             });
           });
@@ -129,4 +124,19 @@ module.exports = async (req, res) => {
   } catch (e) {
     sendEvent({ jsonrpc: "2.0", id, error: { code: -32000, message: e.message } });
   }
-};
+}
+
+const server = http.createServer((req, res) => {
+  if(req.url === '/'){
+    res.end('MCP server running');
+  }else if(req.url === '/mcp'){
+    handleMCP(req, res);
+  }else{
+    res.writeHead(404);
+    res.end('Not Found');
+  }
+});
+
+server.listen(process.env.PORT || 3000, () => {
+  console.log('Server started');
+});
