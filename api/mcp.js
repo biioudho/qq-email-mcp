@@ -18,10 +18,20 @@ async function handleMCP(req, res) {
   res.setHeader("Content-Type", "text/event-stream");
   res.setHeader("Cache-Control", "no-cache");
   res.setHeader("Connection", "keep-alive");
+  res.setHeader("X-Accel-Buffering", "no");
 
   const sendEvent = (data) => {
-    res.write(`data: ${JSON.stringify(data)}\n\n`);
+    try {
+      res.write(`data: ${JSON.stringify(data)}\n\n`);
+    } catch (e) {}
   };
+
+  // 长连接兜底超时，90秒主动关闭
+  const timeout = setTimeout(() => {
+    try { res.end(); } catch(e){}
+  }, 90000);
+
+  req.on("close", () => clearTimeout(timeout));
 
   if (req.method === "GET") {
     sendEvent({
@@ -66,7 +76,13 @@ async function handleMCP(req, res) {
 
   let body = "";
   for await (const chunk of req) body += chunk;
-  const payload = JSON.parse(body);
+  let payload;
+  try {
+    payload = JSON.parse(body);
+  } catch (e) {
+    sendEvent({ jsonrpc: "2.0", id: null, error: { code: -32700, message: "JSON解析失败" } });
+    return;
+  }
   const { id, method, params } = payload;
 
   try {
@@ -91,13 +107,27 @@ async function handleMCP(req, res) {
           password: process.env.QQ_AUTH_CODE
         });
         let latestMailText = "暂无新邮件";
+        let replied = false;
+        const safeReply = (msg) => {
+          if(replied) return;
+          replied = true;
+          sendEvent({ jsonrpc: "2.0", id, result: { content: [{ type: "text", text: msg }] } });
+          imapConn.end();
+        };
+
+        imapConn.on("error", (err) => {
+          safeReply("IMAP连接异常：" + err.message);
+        });
+
         imapConn.on("ready", () => {
           imapConn.openBox("INBOX", false, (err, box) => {
-            if (err) { imapConn.end(); return; }
+            if (err) {
+              safeReply("打开收件箱失败：" + err.message);
+              return;
+            }
             imapConn.search(["UNSEEN"], (err, uids) => {
-              if (err || uids.length === 0) {
-                sendEvent({ jsonrpc: "2.0", id, result: { content: [{ type: "text", text: latestMailText }] } });
-                imapConn.end();
+              if (err || !uids || uids.length === 0) {
+                safeReply(latestMailText);
                 return;
               }
               const latestUid = uids[uids.length - 1];
@@ -112,9 +142,11 @@ async function handleMCP(req, res) {
                 });
               });
               fetch.on("end", () => {
-                sendEvent({ jsonrpc: "2.0", id, result: { content: [{ type: "text", text: latestMailText }] } });
-                imapConn.end();
+                safeReply(latestMailText);
               });
+              fetch.on("error",(err)=>{
+                safeReply("读取邮件失败：" + err.message);
+              })
             });
           });
         });
