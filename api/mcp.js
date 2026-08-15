@@ -1,3 +1,13 @@
+const http = require('http');
+const server = http.createServer((req, res) => {
+  res.end('MCP server running');
+});
+server.listen(process.env.PORT || 3000, () => {
+  console.log('Server started');
+});
+
+// ==========下面粘贴你原来全部的mcp.js原有代码==========
+
 const nodemailer = require("nodemailer");
 
 const getTransporter = () => {
