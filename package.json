@@ -1,0 +1,8 @@
+{
+  "name": "qq-email-mcp",
+  "version": "1.0.0",
+  "main": "api/mcp.js",
+  "dependencies": {
+    "nodemailer": "^6.9.15"
+  }
+}
