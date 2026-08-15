@@ -129,7 +129,7 @@ async function handleMCP(req, res) {
 const server = http.createServer((req, res) => {
   if(req.url === '/'){
     res.end('MCP server running');
-  }else if(req.url === '/mcp'){
+  }else if(req.url.startsWith('/mcp')){
     handleMCP(req, res);
   }else{
     res.writeHead(404);
